@@ -38,13 +38,12 @@
 #   + **[node-uuid]**, generate an unique identifier for each task.
 #   + **[express]**, required by the [http api] and [web front-end] middleware.
 #
-# [redis]:         https://github.com/mranney/node_redis
 # [node-uuid]:     https://github.com/broofa/node-uuid
 # [express]:       https://github.com/visionmedia/express
 # [http api]:      fairy_web.html
 # [web front-end]: fairy_web.html
 uuid  = require 'node-uuid'
-redis = require 'redis'
+redis = require 'ioredis'
 os    = require 'os'
 
 # A constant prefix will be applied to all Redis keys for safety and

@@ -6,9 +6,9 @@
   "homepage": "https://github.com/sharelatex/fairy/tree/cluster",
   "main": "lib/fairy.js",
   "dependencies": {
-    "redis": "*",
-    "node-uuid": "*",
-    "express": "*"
+    "express": "*",
+    "ioredis": "^1.5.0",
+    "node-uuid": "*"
   },
   "devDependencies": {
     "mocha": "*",
