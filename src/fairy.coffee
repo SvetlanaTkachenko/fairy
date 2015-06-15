@@ -45,10 +45,19 @@
 uuid  = require 'node-uuid'
 redis = require 'ioredis'
 os    = require 'os'
+_ = require 'lodash'
 
 # A constant prefix will be applied to all Redis keys for safety and
 # ease-of-management reasons.
 prefix = 'FAIRY'
+
+
+
+
+convertRes = (res)->
+  res = _.flatten(res)
+  res = _.without res, null
+  return res
 
 
 # ### CommonJS Module Definition
@@ -154,8 +163,7 @@ server_ip = ->
 
 # ## Create Redis Client
 create_client = (options) ->
-  client = redis.createClient options.port, options.host, options.options
-  client.auth options.password if options.password?
+  client = new redis(options)
   client
 
 
@@ -225,26 +233,6 @@ class Fairy
       return callback err if err
       callback null, res.map (name) => @queue name
 
-
-  # ### Get Statistics for All Queues Asynchronously
-  
-  # `statistics` is an asynchronous method. The only arg of the callback
-  # function is an array containing statistics of all queues. The actual dirty
-  # work is handed to objects of class `Queue`'s `statistics` method.
-  #
-  #     fairy.statistics (stats) ->
-  #       console.log "Stats of #{stats.length} queues: ", stats
-  statistics: (callback) =>
-    @queues (err, queues) ->
-      return callback err if err
-      return callback null, [] unless total_queues = queues.length
-      result = []
-      for queue, i in queues
-        do (queue, i) ->
-          queue.statistics (err, statistics) ->
-            return callback err if err
-            result[i] = statistics
-            callback null, result if callback unless --total_queues
 
 
 # ## Class Queue
@@ -342,7 +330,10 @@ class Queue
       .rpush(@key('SOURCE'), JSON.stringify([uuid.v4(), args..., Date.now()]))
       .sadd(@key('GROUPS'), args[0])
       .hincrby(@key('STATISTICS'), 'TOTAL', 1)
-      .exec(callback)
+      .exec (err, res)->
+        res = convertRes(res)
+        callback(err, res)
+
 
   # ### Register Handler
 
@@ -400,6 +391,7 @@ class Queue
         .lpop(@key('SOURCE'))
         .rpush("#{@key('QUEUED')}:#{task[1]}", res)
         .exec (multi_err, multi_res) =>
+          multi_res = convertRes(multi_res)
           return @_poll() unless multi_res and multi_res[1] is 1
           @_process task
       else
@@ -534,6 +526,7 @@ class Queue
         @redis.multi()
         .lpop("#{@key('QUEUED')}:#{group}")
         .exec (multi_err, multi_res) =>
+          multi_res = convertRes(multi_res)
           return @_continue_group group unless multi_res   
           return @_try_exit() if exiting
           @_poll()
@@ -557,6 +550,7 @@ class Queue
       .lpush("#{@key('SOURCE')}", res.reverse()...)
       .del("#{@key('QUEUED')}:#{group}")
       .exec (multi_err, multi_res) =>
+        multi_res = convertRes(multi_res)
         return @_requeue_group group unless multi_res
         return @_try_exit()
 
@@ -621,6 +615,7 @@ class Queue
               multi.del groups.map((group) => "#{@key('QUEUED')}:#{group}")... if groups.length
               multi.del @key 'BLOCKED'
               multi.exec (multi_err, multi_res) =>
+                multi_res = convertRes(multi_res)
                 if multi_err
                   client.quit()
                   return callback multi_err 
@@ -893,121 +888,10 @@ class Queue
           .del(@key('GROUPS'), @key('RECENT'), @key('FAILED'), @key('SOURCE'), @key('STATISTICS'), @key('SLOWEST'), @key('BLOCKED'), res...)
           .hmset(@key('STATISTICS'), 'TOTAL', processing, 'FINISHED', 0, 'TOTAL_PENDING_TIME', 0, 'TOTAL_PROCESS_TIME', 0)
           .exec (err, res) =>
+            res = convertRes(res)
             return callback? err if err
             return @clear callback unless res
-            @statistics callback if callback
+            callback()
 
 
-  # ### Get Statistics of a Queue Asynchronously
-  
-  # Statistics of a queue include:
-  # 
-  #   + `name`, name of the queue.
-  #   + `workers`, total live workers.
-  #   + `processing_tasks`, total processing tasks.
-  #   + `total`
-  #     - `groups`, total groups of tasks.
-  #     - `tasks`, total tasks placed.
-  #   + `finished_tasks`, total tasks finished.
-  #   + `average_pending_time`, average time spent on waiting for processing the
-  #   finished tasks in milliseconds.
-  #   + `average_process_time`, average time spent on processing the finished
-  #   tasks in milliseconds.
-  #   + `failed_tasks`, total tasks failed.
-  #   + `blocked`
-  #     - `groups`, total blocked groups.
-  #     - `tasks`, total blocked tasks.
-  #   + `pending_tasks`, total pending tasks.
-  #
-  # `statistics` is an asynchronous method. Arguments of the callback function
-  # follow node.js asynchronous callback convention: `err` and `res`.
-  #
-  # Below is an example of the `res` object:
-  #
-  #       { name: 'task',
-  #         workers: 1,
-  #         processing_tasks: 0,
-  #         total: { groups: 10, tasks: 20000 },
-  #         finished_tasks: 8373,
-  #         average_pending_time: 313481,
-  #         average_process_time: 14,
-  #         failed_tasks: 15,
-  #         blocked: { groups: 9, tasks: 11612 },
-  #         pending_tasks: 0 }
-  #
-  # If there're no finished tasks, `average_pending_time` and
-  # `average_process_time` will both be string `-`.
-  #
-  # **Usage:**
-  #
-  #       queue.statistics (err, statistics) -> # YOUR CODE
-  statistics: (callback) ->
-
-    # Start a transaction, in the transaction:
-    #
-    #   1. Count total groups -- `SCARD` of `GROUPS` set.
-    #   2. Get all fields and values in the `STATISTICS` hash, including:
-    #     + `total`
-    #     + `finished`
-    #     + `total_pending_time`
-    #     + `total_process_time`
-    #   3. Count processing tasks -- `LLEN` of `PROCESSING` list.
-    #   4. Count failed task -- `LLEN` of `FAILED` list.
-    #   5. Get identifiers of blocked group -- `SMEMBERS` of `BLOCKED` set.
-    #   6. Count **live** workers of this queue -- `HLEN` of `WORKERS`.
-    @redis.multi()
-      .scard(@key('GROUPS'))
-      .hgetall(@key('STATISTICS'))
-      .hlen(@key('PROCESSING'))
-      .llen(@key('FAILED'))
-      .smembers(@key('BLOCKED'))
-      .hlen(@key('WORKERS'))
-      .exec (multi_err, multi_res) =>
-        return callback multi_err if multi_err
-
-        # Process the result of the transaction.
-        #
-        # 1. Assign transaction results to result object, and:
-        # 2. Convert:
-        #   - `total_pending_time` into `average_pending_time`, and:
-        #   - `total_process_time` into `average_process_time`
-        # 3. Calibrate initial condition (in case of no task is finished).
-        statistics = multi_res[1] or {}
-        result =
-          name: @name
-          total:
-            groups: multi_res[0]
-            tasks: parseInt(statistics.TOTAL) or 0
-          finished_tasks: parseInt(statistics.FINISHED) or 0
-          average_pending_time: Math.round(statistics.TOTAL_PENDING_TIME * 100 / statistics.FINISHED) / 100
-          average_process_time: Math.round(statistics.TOTAL_PROCESS_TIME * 100 / statistics.FINISHED) / 100
-          blocked:
-            groups: multi_res[4].length
-          processing_tasks: multi_res[2]
-          failed_tasks: multi_res[3]
-          workers: multi_res[5]
-        if result.finished_tasks is 0
-          result.average_pending_time = '-'
-          result.average_process_time = '-'
-
-        # Calculate blocked and pending tasks:
-        # 
-        #   1. Initiate another transaction to count all `BLOCKED` tasks. Blocked
-        #   tasks are tasks in the `QUEUED` lists whose group identifiers are in
-        #   the `BLOCKED` set. **Note:** The leftmost task of each `QUEUED` list
-        #   will not be counted, since that's the causing (failed) task.
-        #   2. Calculate pending tasks.
-        #
-        # The equation used to calculate pending tasks is:
-        #
-        #      pending = total - finished - processing - failed - blocked
-        multi2 = @redis.multi()
-        multi2.llen "#{@key('QUEUED')}:#{group}" for group in multi_res[4]
-        multi2.exec (multi2_err, multi2_res) ->
-          return callback multi2_err if multi2_err
-          result.blocked.tasks = multi2_res.reduce(((a, b) -> a + b), - result.blocked.groups)
-          result.pending_tasks = result.total.tasks - result.finished_tasks - result.processing_tasks - result.failed_tasks - result.blocked.tasks
-          callback null, result
-
-
-# ### Known Bugs:
+ 
