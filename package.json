@@ -1,13 +1,9 @@
 {
-  "author": "Baoshan Sheng <sheng@icmd.org> (https://github.com/baoshan)",
-  "name": "fairy",
+  "author": "henry oswald - fork of <sheng@icmd.org> (https://github.com/baoshan)",
+  "name": "fairy-cluster-sharelatex",
   "description": "Queue System Treats Tasks Fairly.",
   "version": "0.0.2",
-  "homepage": "https://github.com/baoshan/fairy",
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:baoshan/fairy.git"
-  },
+  "homepage": "https://github.com/sharelatex/fairy/tree/cluster",
   "main": "lib/fairy.js",
   "dependencies": {
     "redis": "*",
