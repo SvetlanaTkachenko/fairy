@@ -1,6 +1,6 @@
 {
   "author": "henry oswald - fork of <sheng@icmd.org> (https://github.com/baoshan)",
-  "name": "fairy-cluster-sharelatex",
+  "name": "fairy",
   "description": "Queue System Treats Tasks Fairly.",
   "version": "0.0.2",
   "homepage": "https://github.com/sharelatex/fairy/tree/cluster",
